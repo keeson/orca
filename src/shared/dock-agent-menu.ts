@@ -1,4 +1,5 @@
 import type { DashboardRevealAgentArgs } from './dashboard-snapshot'
+import { normalizeExecutionHostId } from './execution-host'
 
 /** A renderer-provided target that the macOS Dock can route back to the main window. */
 export type DockAgentEntry = {
@@ -15,8 +16,8 @@ export type DockAgentMenuPayload = {
 export const DOCK_AGENT_MENU_UPDATE = 'app:setDockAgentMenu'
 export const DOCK_AGENT_OPEN = 'app:openDockAgent'
 
-/** Keep a renderer update from creating an unbounded native menu. */
-export const MAX_DOCK_AGENT_ENTRIES = 200
+/** Bound each native submenu without dropping conversations from the payload. */
+export const DOCK_AGENT_MENU_PAGE_SIZE = 20
 export const MAX_DOCK_AGENT_ID_LENGTH = 4_096
 export const MAX_DOCK_AGENT_LABEL_LENGTH = 240
 
@@ -36,14 +37,15 @@ function isDashboardRevealTarget(value: unknown): value is DashboardRevealAgentA
     isBoundedString(value.repoId, MAX_DOCK_AGENT_ID_LENGTH) &&
     isBoundedString(value.worktreeId, MAX_DOCK_AGENT_ID_LENGTH) &&
     (value.executionHostId === undefined ||
-      isBoundedString(value.executionHostId, MAX_DOCK_AGENT_ID_LENGTH)) &&
+      (isBoundedString(value.executionHostId, MAX_DOCK_AGENT_ID_LENGTH) &&
+        normalizeExecutionHostId(value.executionHostId) !== null)) &&
     isBoundedString(value.tabId, MAX_DOCK_AGENT_ID_LENGTH) &&
     (value.leafId === null || isBoundedString(value.leafId, MAX_DOCK_AGENT_ID_LENGTH))
   )
 }
 
 function readEntries(value: unknown, group: string): DockAgentEntry[] {
-  if (!Array.isArray(value) || value.length > MAX_DOCK_AGENT_ENTRIES) {
+  if (!Array.isArray(value)) {
     throw new Error(`Invalid Dock ${group} agents`)
   }
 
@@ -76,7 +78,7 @@ function readEntries(value: unknown, group: string): DockAgentEntry[] {
   })
 }
 
-/** Validates and bounds the renderer-controlled native Dock menu payload. */
+/** Validates unique entries and bounds their labels and navigation targets. */
 export function readDockAgentMenuPayload(value: unknown): DockAgentMenuPayload {
   if (!isRecord(value)) {
     throw new Error('Invalid Dock agent menu')

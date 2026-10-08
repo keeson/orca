@@ -1,13 +1,11 @@
 import { useEffect } from 'react'
 import { useAppStore, type AppState } from '@/store'
 import { buildDashboardSnapshot } from '@/components/dashboard/build-dashboard-snapshot'
-import { dashboardSnapshotInputsChanged } from '@/components/dashboard/useDashboardPopoutBridge'
 import { createWorktreeAgentRowsCache } from '@/components/dashboard/worktree-agent-rows-cache'
 import { revealDashboardAgent } from '@/components/dashboard/reveal-dashboard-agent'
 import { isWebClientLocation } from '@/lib/web-client-location'
 import type { DashboardCard, DashboardSnapshot } from '../../../shared/dashboard-snapshot'
 import {
-  MAX_DOCK_AGENT_ENTRIES,
   MAX_DOCK_AGENT_LABEL_LENGTH,
   type DockAgentEntry,
   type DockAgentMenuPayload
@@ -94,9 +92,6 @@ function selectEntries(
     }
     seenIds.add(entry.id)
     entries.push(entry)
-    if (entries.length >= MAX_DOCK_AGENT_ENTRIES) {
-      break
-    }
   }
   return entries
 }
@@ -127,7 +122,21 @@ function dockSnapshotInputsChanged(
     state.agentStatusByPaneKey !== previousState.agentStatusByPaneKey ||
     state.agentStatusEpoch !== previousState.agentStatusEpoch ||
     state.unreadTerminalTabs !== previousState.unreadTerminalTabs ||
-    dashboardSnapshotInputsChanged(state, previousState)
+    state.repos !== previousState.repos ||
+    state.worktreesByRepo !== previousState.worktreesByRepo ||
+    state.folderWorkspaces !== previousState.folderWorkspaces ||
+    state.projectGroups !== previousState.projectGroups ||
+    state.tabsByWorktree !== previousState.tabsByWorktree ||
+    state.unifiedTabsByWorktree !== previousState.unifiedTabsByWorktree ||
+    state.retainedAgentsByPaneKey !== previousState.retainedAgentsByPaneKey ||
+    state.migrationUnsupportedByPtyId !== previousState.migrationUnsupportedByPtyId ||
+    state.runtimeAgentOrchestrationByPaneKey !== previousState.runtimeAgentOrchestrationByPaneKey ||
+    state.terminalLayoutsByTabId !== previousState.terminalLayoutsByTabId ||
+    state.ptyIdsByTabId !== previousState.ptyIdsByTabId ||
+    state.runtimePaneTitlesByTabId !== previousState.runtimePaneTitlesByTabId ||
+    state.paneForegroundAgentByPaneKey !== previousState.paneForegroundAgentByPaneKey ||
+    state.acknowledgedAgentsByPaneKey !== previousState.acknowledgedAgentsByPaneKey ||
+    state.settings?.tabAutoGenerateTitle !== previousState.settings?.tabAutoGenerateTitle
   )
 }
 
@@ -154,6 +163,9 @@ export function useDockAgentMenu(): void {
       }
       const state = useAppStore.getState()
       const snapshot = buildDashboardSnapshot(state, Date.now(), {
+        includeCardDetails: false,
+        includeFilterOptions: false,
+        includeExecutionHostId: true,
         rowsCache,
         rowsGeneration: state.agentStatusEpoch
       })

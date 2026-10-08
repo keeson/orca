@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  MAX_DOCK_AGENT_ENTRIES,
-  MAX_DOCK_AGENT_LABEL_LENGTH,
-  readDockAgentMenuPayload
-} from './dock-agent-menu'
+import { MAX_DOCK_AGENT_LABEL_LENGTH, readDockAgentMenuPayload } from './dock-agent-menu'
 
 function entry(id: string, label = 'Agent') {
   return {
@@ -32,7 +28,7 @@ describe('readDockAgentMenuPayload', () => {
     })
   })
 
-  it('rejects duplicate ids, malformed targets, and oversized groups', () => {
+  it('rejects duplicate ids and malformed targets', () => {
     expect(() =>
       readDockAgentMenuPayload({ active: [entry('same'), entry('same')], unread: [] })
     ).toThrow('Invalid Dock active agent')
@@ -44,12 +40,23 @@ describe('readDockAgentMenuPayload', () => {
     ).toThrow('Invalid Dock active agent')
     expect(() =>
       readDockAgentMenuPayload({
-        active: Array.from({ length: MAX_DOCK_AGENT_ENTRIES + 1 }, (_, index) =>
-          entry(String(index))
-        ),
+        active: [
+          {
+            ...entry('bad-host'),
+            target: { ...entry('bad-host').target, executionHostId: 'invalid' }
+          }
+        ],
         unread: []
       })
-    ).toThrow('Invalid Dock active agents')
+    ).toThrow('Invalid Dock active agent')
+  })
+
+  it('admits long groups so the native menu can page every matching conversation', () => {
+    const entries = Array.from({ length: 421 }, (_, index) => entry(String(index)))
+    expect(readDockAgentMenuPayload({ active: entries, unread: entries })).toEqual({
+      active: entries,
+      unread: entries
+    })
   })
 
   it('rejects labels that become empty after whitespace cleanup', () => {

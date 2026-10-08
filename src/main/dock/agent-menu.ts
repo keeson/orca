@@ -2,6 +2,7 @@ import { app, ipcMain, Menu, type MenuItemConstructorOptions, type WebContents }
 import {
   DOCK_AGENT_MENU_UPDATE,
   DOCK_AGENT_OPEN,
+  DOCK_AGENT_MENU_PAGE_SIZE,
   readDockAgentMenuPayload,
   type DockAgentEntry,
   type DockAgentMenuPayload
@@ -11,6 +12,30 @@ import { translateMain, mainI18n } from '../i18n/main-i18n'
 import { safelyRevealWindow } from '../window/focus-existing-window'
 
 let disposeMenu: (() => void) | null = null
+
+function agentItems(
+  entries: readonly DockAgentEntry[],
+  open: (entry: DockAgentEntry) => void,
+  offset = 0
+): MenuItemConstructorOptions[] {
+  if (entries.length <= DOCK_AGENT_MENU_PAGE_SIZE) {
+    return entries.map((entry) => ({ label: entry.label, click: () => open(entry) }))
+  }
+  // Keep both the fan-out and leaf menus small, even with thousands of conversations.
+  let rangeSize = DOCK_AGENT_MENU_PAGE_SIZE
+  while (Math.ceil(entries.length / rangeSize) > DOCK_AGENT_MENU_PAGE_SIZE) {
+    rangeSize *= DOCK_AGENT_MENU_PAGE_SIZE
+  }
+  const items: MenuItemConstructorOptions[] = []
+  for (let start = 0; start < entries.length; start += rangeSize) {
+    const end = Math.min(start + rangeSize, entries.length)
+    items.push({
+      label: `${offset + start + 1}–${offset + end}`,
+      submenu: agentItems(entries.slice(start, end), open, offset + start)
+    })
+  }
+  return items
+}
 
 function sectionItems(
   title: string,
@@ -23,12 +48,7 @@ function sectionItems(
       label: `${title} (${entries.length})`,
       enabled: false
     },
-    ...(entries.length > 0
-      ? entries.map((entry) => ({
-          label: entry.label,
-          click: () => open(entry)
-        }))
-      : [{ label: emptyLabel, enabled: false }])
+    ...(entries.length > 0 ? agentItems(entries, open) : [{ label: emptyLabel, enabled: false }])
   ]
 }
 
@@ -70,11 +90,13 @@ export function registerDockAgentMenu(): void {
   let owner: WebContents | null = null
 
   const open = (entry: DockAgentEntry): void => {
-    if (
-      owner !== getTrustedUIRendererWebContents() ||
-      (!payload.active.some((candidate) => candidate.id === entry.id) &&
-        !payload.unread.some((candidate) => candidate.id === entry.id))
-    ) {
+    if (owner !== getTrustedUIRendererWebContents()) {
+      return
+    }
+    const current =
+      payload.active.find((candidate) => candidate.id === entry.id) ??
+      payload.unread.find((candidate) => candidate.id === entry.id)
+    if (!current) {
       return
     }
     const window = getTrustedUIRendererWindow()
@@ -82,7 +104,7 @@ export function registerDockAgentMenu(): void {
       return
     }
     safelyRevealWindow(window)
-    window.webContents.send(DOCK_AGENT_OPEN, entry.target)
+    window.webContents.send(DOCK_AGENT_OPEN, current.target)
   }
 
   const render = (): void => {
@@ -90,7 +112,7 @@ export function registerDockAgentMenu(): void {
   }
 
   const release = (): void => {
-    owner?.removeListener('did-start-navigation', onNavigation)
+    owner?.removeListener('did-navigate', release)
     owner?.removeListener('render-process-gone', release)
     owner?.removeListener('destroyed', release)
     owner = null
@@ -98,15 +120,12 @@ export function registerDockAgentMenu(): void {
     render()
   }
 
-  const onNavigation = (details: { isMainFrame: boolean; isSameDocument: boolean }): void => {
-    if (details.isMainFrame && !details.isSameDocument) {
-      release()
-    }
-  }
-
   ipcMain.removeHandler(DOCK_AGENT_MENU_UPDATE)
   ipcMain.handle(DOCK_AGENT_MENU_UPDATE, (event, value: unknown): void => {
-    if (event.sender !== getTrustedUIRendererWebContents()) {
+    if (
+      event.sender !== getTrustedUIRendererWebContents() ||
+      event.senderFrame !== event.sender.mainFrame
+    ) {
       return
     }
     let next: DockAgentMenuPayload
@@ -122,7 +141,8 @@ export function registerDockAgentMenu(): void {
     if (owner !== event.sender) {
       release()
       owner = event.sender
-      owner.on('did-start-navigation', onNavigation)
+      // Started navigations can be blocked without replacing the renderer document.
+      owner.once('did-navigate', release)
       owner.once('render-process-gone', release)
       owner.once('destroyed', release)
     }

@@ -1,44 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DOCK_AGENT_MENU_PAGE_SIZE } from '../../shared/dock-agent-menu'
 
-const mocks = vi.hoisted(() => {
-  type Listener = (...args: unknown[]) => void
-  const createEmitter = () => {
-    const listeners = new Map<string, Set<Listener>>()
-    return {
-      on(event: string, listener: Listener) {
-        const group = listeners.get(event) ?? new Set<Listener>()
-        group.add(listener)
-        listeners.set(event, group)
-        return this
-      },
-      once(event: string, listener: Listener) {
-        const wrapped: Listener = (...args) => {
-          this.removeListener(event, wrapped)
-          listener(...args)
-        }
-        return this.on(event, wrapped)
-      },
-      removeListener(event: string, listener: Listener) {
-        listeners.get(event)?.delete(listener)
-        return this
-      },
-      off(event: string, listener: Listener) {
-        return this.removeListener(event, listener)
-      },
-      removeAllListeners() {
-        listeners.clear()
-        return this
-      },
-      emit(event: string, ...args: unknown[]) {
-        for (const listener of listeners.get(event) ?? []) {
-          listener(...args)
-        }
-        return listeners.has(event)
-      }
-    }
-  }
+const mocks = await vi.hoisted(async () => {
+  const { EventEmitter } = await import('node:events')
+  const createEmitter = () => new EventEmitter()
   const app = createEmitter()
-  const trustedRenderer = createEmitter()
+  const trustedRenderer = Object.assign(createEmitter(), { mainFrame: {} })
   const setMenu = vi.fn()
   const buildFromTemplate = vi.fn((template: unknown) => ({ template }))
   const handlerState: { current: ((event: unknown, value: unknown) => void) | null } = {
@@ -112,6 +79,25 @@ function lastMenuTemplate(): Electron.MenuItemConstructorOptions[] {
   return menu.template
 }
 
+function trustedEvent() {
+  return { sender: mocks.trustedRenderer, senderFrame: mocks.trustedRenderer.mainFrame }
+}
+
+function reachableAgentItems(
+  template: Electron.MenuItemConstructorOptions[]
+): Electron.MenuItemConstructorOptions[] {
+  const items: Electron.MenuItemConstructorOptions[] = []
+  for (const item of template) {
+    if (Array.isArray(item.submenu)) {
+      expect(item.submenu.length).toBeLessThanOrEqual(DOCK_AGENT_MENU_PAGE_SIZE)
+      items.push(...reachableAgentItems(item.submenu))
+    } else if (item.click) {
+      items.push(item)
+    }
+  }
+  return items
+}
+
 describe('Dock agent menu', () => {
   beforeEach(() => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
@@ -152,6 +138,24 @@ describe('Dock agent menu', () => {
     expect(mocks.handlerState.current).toBeNull()
   })
 
+  it('keeps every conversation reachable through bounded range submenus', () => {
+    const entries = Array.from({ length: 421 }, (_, index) => entry(String(index)))
+    const open = vi.fn()
+    const template = buildDockAgentMenu({ active: [], unread: entries }, open)
+    const items = reachableAgentItems(template)
+
+    expect(template).toContainEqual(expect.objectContaining({ label: 'Unread messages (421)' }))
+    expect(template).toContainEqual(expect.objectContaining({ label: '401–421' }))
+    expect(items.map((item) => item.label)).toEqual(entries.map((candidate) => candidate.label))
+    expect(open).not.toHaveBeenCalled()
+    const lastClick = items.at(-1)?.click
+    if (!lastClick) {
+      throw new Error('Last conversation is not clickable')
+    }
+    Reflect.apply(lastClick, undefined, [])
+    expect(open).toHaveBeenCalledWith(entries.at(-1))
+  })
+
   it('accepts only the trusted renderer and clears the menu after a full navigation', () => {
     registerDockAgentMenu()
     const handler = mocks.handlerState.current
@@ -162,10 +166,46 @@ describe('Dock agent menu', () => {
       expect.objectContaining({ label: 'No active agents' })
     )
 
-    handler?.({ sender: mocks.trustedRenderer }, { active: [entry('trusted')], unread: [] })
+    handler?.(
+      { sender: mocks.trustedRenderer, senderFrame: {} },
+      { active: [entry('subframe')], unread: [] }
+    )
+    expect(lastMenuTemplate()).toContainEqual(
+      expect.objectContaining({ label: 'No active agents' })
+    )
+
+    handler?.(trustedEvent(), { active: [entry('trusted')], unread: [] })
     expect(lastMenuTemplate()).toContainEqual(expect.objectContaining({ label: 'Agent trusted' }))
 
-    mocks.trustedRenderer.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    mocks.trustedRenderer.emit('did-navigate', {}, 'file:///app', 200, 'OK')
+    expect(lastMenuTemplate()).toContainEqual(
+      expect.objectContaining({ label: 'No active agents' })
+    )
+  })
+
+  it('preserves the menu when navigation is blocked or stays within the document', () => {
+    registerDockAgentMenu()
+    mocks.handlerState.current?.(trustedEvent(), { active: [entry('active')], unread: [] })
+    const renders = mocks.setMenu.mock.calls.length
+
+    for (const url of ['https://example.invalid/', 'file:///Users/me/dropped.png']) {
+      mocks.trustedRenderer.emit('did-start-navigation', {
+        isMainFrame: true,
+        isSameDocument: false,
+        url
+      })
+      mocks.trustedRenderer.emit('will-navigate', { defaultPrevented: true }, url)
+    }
+    mocks.trustedRenderer.emit('did-navigate-in-page', {}, 'file:///app#pane', true)
+
+    expect(mocks.setMenu).toHaveBeenCalledTimes(renders)
+    expect(lastMenuTemplate()).toContainEqual(expect.objectContaining({ label: 'Agent active' }))
+  })
+
+  it.each(['render-process-gone', 'destroyed'])('clears entries after %s', (event) => {
+    registerDockAgentMenu()
+    mocks.handlerState.current?.(trustedEvent(), { active: [entry('active')], unread: [] })
+    mocks.trustedRenderer.emit(event)
     expect(lastMenuTemplate()).toContainEqual(
       expect.objectContaining({ label: 'No active agents' })
     )
@@ -173,10 +213,7 @@ describe('Dock agent menu', () => {
 
   it('reveals the main window and forwards the exact target on selection', () => {
     registerDockAgentMenu()
-    mocks.handlerState.current?.(
-      { sender: mocks.trustedRenderer },
-      { active: [entry('active')], unread: [] }
-    )
+    mocks.handlerState.current?.(trustedEvent(), { active: [entry('active')], unread: [] })
 
     const item = lastMenuTemplate().find((candidate) => candidate.label === 'Agent active')
     const click = item?.click
@@ -191,5 +228,29 @@ describe('Dock agent menu', () => {
       'app:openDockAgent',
       entry('active').target
     )
+  })
+
+  it('resolves an older menu click to the latest target and rejects removed entries', () => {
+    registerDockAgentMenu()
+    mocks.handlerState.current?.(trustedEvent(), { active: [entry('active')], unread: [] })
+    const click = lastMenuTemplate().find((candidate) => candidate.label === 'Agent active')?.click
+    if (!click) {
+      throw new Error('Dock agent menu item is not clickable')
+    }
+    const latest = {
+      ...entry('active'),
+      target: { ...entry('active').target, tabId: 'resumed-tab', leafId: 'resumed-leaf' }
+    }
+    mocks.handlerState.current?.(trustedEvent(), { active: [], unread: [latest] })
+    Reflect.apply(click, undefined, [])
+    expect(mocks.trustedWindow.webContents.send).toHaveBeenLastCalledWith(
+      'app:openDockAgent',
+      latest.target
+    )
+
+    mocks.handlerState.current?.(trustedEvent(), { active: [], unread: [] })
+    Reflect.apply(click, undefined, [])
+    expect(mocks.trustedWindow.webContents.send).toHaveBeenCalledTimes(1)
+    expect(mocks.safelyRevealWindow).toHaveBeenCalledTimes(1)
   })
 })

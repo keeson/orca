@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DashboardCard, DashboardSnapshot } from '../../../shared/dashboard-snapshot'
-import {
-  MAX_DOCK_AGENT_ENTRIES,
-  MAX_DOCK_AGENT_LABEL_LENGTH
-} from '../../../shared/dock-agent-menu'
+import { MAX_DOCK_AGENT_LABEL_LENGTH } from '../../../shared/dock-agent-menu'
 import { buildDockAgentMenuPayload } from './useDockAgentMenu'
 
 function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
@@ -65,9 +62,9 @@ describe('buildDockAgentMenuPayload', () => {
     expect(result.unread.map((entry) => entry.target.tabId)).toEqual(['tab-unseen', 'tab-terminal'])
   })
 
-  it('makes duplicate labels readable and caps each group at the native menu limit', () => {
+  it('makes duplicate labels readable without dropping long-list conversations', () => {
     const longTask = 'x'.repeat(MAX_DOCK_AGENT_LABEL_LENGTH + 40)
-    const cards = Array.from({ length: MAX_DOCK_AGENT_ENTRIES + 1 }, (_, index) =>
+    const cards = Array.from({ length: 421 }, (_, index) =>
       card({
         paneKey: `pane-${index}`,
         task: index < 2 ? 'Same task' : longTask,
@@ -76,7 +73,9 @@ describe('buildDockAgentMenuPayload', () => {
     )
     const result = buildDockAgentMenuPayload(snapshot(cards))
 
-    expect(result.unread).toHaveLength(MAX_DOCK_AGENT_ENTRIES)
+    expect(result.active).toHaveLength(cards.length)
+    expect(result.unread).toHaveLength(cards.length)
+    expect(result.unread.at(-1)?.id).toBe('local:repo-1:worktree-1:pane-420')
     expect(result.unread[0]?.label).toBe('Orca / feature/dock · Same task')
     expect(result.unread[1]?.label).toBe('Orca / feature/dock · Same task (2)')
     expect(
