@@ -230,6 +230,34 @@ describe('Dock agent menu', () => {
     )
   })
 
+  it('preserves the last valid menu when shared ids have conflicting targets', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    registerDockAgentMenu()
+    const payload = { active: [entry('same')], unread: [entry('same')] }
+    mocks.handlerState.current?.(trustedEvent(), payload)
+    const renders = mocks.setMenu.mock.calls.length
+
+    mocks.handlerState.current?.(trustedEvent(), {
+      active: payload.active,
+      unread: [{ ...entry('same'), target: { ...entry('same').target, tabId: 'other-tab' } }]
+    })
+    expect(warn).toHaveBeenCalledWith(
+      '[dock] rejected malformed agent menu:',
+      'Conflicting Dock agent targets'
+    )
+    expect(mocks.setMenu).toHaveBeenCalledTimes(renders)
+
+    const unreadClick = lastMenuTemplate().at(-1)?.click
+    if (!unreadClick) {
+      throw new Error('Unread Dock agent menu item is not clickable')
+    }
+    Reflect.apply(unreadClick, undefined, [])
+    expect(mocks.trustedWindow.webContents.send).toHaveBeenLastCalledWith(
+      'app:openDockAgent',
+      entry('same').target
+    )
+  })
+
   it('resolves an older menu click to the latest target and rejects removed entries', () => {
     registerDockAgentMenu()
     mocks.handlerState.current?.(trustedEvent(), { active: [entry('active')], unread: [] })

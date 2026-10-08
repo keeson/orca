@@ -51,6 +51,34 @@ describe('readDockAgentMenuPayload', () => {
     ).toThrow('Invalid Dock active agent')
   })
 
+  it('accepts the same agent in both groups when navigation targets match', () => {
+    const payload = {
+      active: [entry('same', 'Working agent')],
+      unread: [entry('same', 'Unread agent')]
+    }
+    expect(readDockAgentMenuPayload(payload)).toEqual(payload)
+  })
+
+  it.each(['repoId', 'worktreeId', 'executionHostId', 'tabId', 'leafId'])(
+    'rejects a shared id with conflicting %s targets',
+    (field) => {
+      expect(() =>
+        readDockAgentMenuPayload({
+          active: [entry('same')],
+          unread: [
+            {
+              ...entry('same'),
+              target: {
+                ...entry('same').target,
+                [field]: field === 'executionHostId' ? 'ssh:other' : 'different'
+              }
+            }
+          ]
+        })
+      ).toThrow('Conflicting Dock agent targets')
+    }
+  )
+
   it('admits long groups so the native menu can page every matching conversation', () => {
     const entries = Array.from({ length: 421 }, (_, index) => entry(String(index)))
     expect(readDockAgentMenuPayload({ active: entries, unread: entries })).toEqual({

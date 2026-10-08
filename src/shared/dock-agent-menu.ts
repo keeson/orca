@@ -78,13 +78,26 @@ function readEntries(value: unknown, group: string): DockAgentEntry[] {
   })
 }
 
-/** Validates unique entries and bounds their labels and navigation targets. */
+/** Validates entries and requires shared IDs to address the same agent. */
 export function readDockAgentMenuPayload(value: unknown): DockAgentMenuPayload {
   if (!isRecord(value)) {
     throw new Error('Invalid Dock agent menu')
   }
-  return {
-    active: readEntries(value.active, 'active'),
-    unread: readEntries(value.unread, 'unread')
+  const active = readEntries(value.active, 'active')
+  const unread = readEntries(value.unread, 'unread')
+  const activeTargets = new Map(active.map((entry) => [entry.id, entry.target]))
+  for (const entry of unread) {
+    const target = activeTargets.get(entry.id)
+    if (
+      target &&
+      (target.repoId !== entry.target.repoId ||
+        target.worktreeId !== entry.target.worktreeId ||
+        target.executionHostId !== entry.target.executionHostId ||
+        target.tabId !== entry.target.tabId ||
+        target.leafId !== entry.target.leafId)
+    ) {
+      throw new Error('Conflicting Dock agent targets')
+    }
   }
+  return { active, unread }
 }
