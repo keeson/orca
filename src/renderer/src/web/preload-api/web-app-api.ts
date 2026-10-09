@@ -10,6 +10,9 @@ export function createWebAppApi(): Partial<PreloadApi> {
     app: {
       setDockAgentMenu: () => Promise.resolve(),
       onOpenDockAgent: () => () => undefined,
+      // Browser preferences do not use the desktop profile writer.
+      isProfileStateSaveDelayed: () => Promise.resolve(false),
+      onProfileStateSaveDelayChanged: () => () => undefined,
       getIdentity: () =>
         Promise.resolve({
           name: 'Orca',

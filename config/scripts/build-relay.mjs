@@ -9,6 +9,7 @@
  * gracefully degraded.
  */
 import { build } from 'esbuild'
+import { JSONC_PARSER_ESM_ALIAS } from '../build-plugins/jsonc-parser-esm.ts'
 import { createHash } from 'node:crypto'
 import {
   copyFileSync,
@@ -24,6 +25,7 @@ import {
   RELAY_BUILD_PLATFORMS,
   RELAY_VERSION_FILENAME,
   RELAY_OPENCODE_SQLITE_READER_FILENAME,
+  WSL_CLAUDE_PROFILE_HELPER_FILENAME,
   relayOptionalArtifactFilenames,
   isWindowsRelayPlatform,
   relayArtifactFilenames
@@ -60,7 +62,6 @@ const MANAGED_HOOK_RUNTIME_ENTRY = join(
   'agent-hooks',
   'managed-hook-runtime.ts'
 )
-const JSONC_PARSER_ESM_ENTRY = join(ROOT, 'node_modules', 'jsonc-parser', 'lib', 'esm', 'main.js')
 const NODE_PTY_CONSOLE_LIST_PATCH_FILENAME = 'node-pty-1.1.0-console-list-agent-patch.cjs'
 const NODE_PTY_CONSOLE_LIST_PATCH_SOURCE = join(
   ROOT,
@@ -102,9 +103,10 @@ const RELAY_VERSION = '0.1.0'
 async function buildRelayBundles(outDir) {
   await build({
     entryPoints: [RELAY_ENTRY],
+    alias: JSONC_PARSER_ESM_ALIAS,
     bundle: true,
     platform: 'node',
-    target: 'node18',
+    target: 'node24',
     format: 'cjs',
     outfile: join(outDir, 'relay.js'),
     // Native addons cannot be bundled — they must exist on the remote host.
@@ -121,7 +123,7 @@ async function buildRelayBundles(outDir) {
     entryPoints: [WATCHER_ENTRY],
     bundle: true,
     platform: 'node',
-    target: 'node18',
+    target: 'node24',
     format: 'cjs',
     outfile: join(outDir, 'relay-watcher.js'),
     external: ['@parcel/watcher'],
@@ -136,7 +138,7 @@ async function buildRelayBundles(outDir) {
     entryPoints: [AI_VAULT_SERVICE_ENTRY],
     bundle: true,
     platform: 'node',
-    target: 'node18',
+    target: 'node24',
     format: 'cjs',
     outfile: join(outDir, 'relay-ai-vault-service.js'),
     external: ['electron'],
@@ -151,7 +153,7 @@ async function buildRelayBundles(outDir) {
     entryPoints: [OPENCODE_SQLITE_READER_ENTRY],
     bundle: true,
     platform: 'node',
-    target: 'node18',
+    target: 'node24',
     format: 'cjs',
     outfile: join(outDir, RELAY_OPENCODE_SQLITE_READER_FILENAME),
     external: ['electron'],
@@ -166,7 +168,7 @@ async function buildRelayBundles(outDir) {
     entryPoints: [WSL_TRANSCRIPT_FS_PROCESS_ENTRY],
     bundle: true,
     platform: 'node',
-    target: 'node18',
+    target: 'node24',
     format: 'cjs',
     outfile: join(outDir, 'wsl-transcript-fs-process-entry.js'),
     external: ['electron'],
@@ -181,12 +183,12 @@ async function buildRelayBundles(outDir) {
     entryPoints: [MANAGED_HOOK_RUNTIME_ENTRY],
     bundle: true,
     platform: 'node',
-    target: 'node18',
+    target: 'node24',
     format: 'cjs',
     outfile: join(outDir, 'managed-hook-runtime.js'),
     // Why: jsonc-parser's default UMD build keeps relative dynamic requires
     // that break after bundling; its ESM entry is equivalent and self-contained.
-    alias: { 'jsonc-parser': JSONC_PARSER_ESM_ENTRY },
+    alias: JSONC_PARSER_ESM_ALIAS,
     sourcemap: false,
     minify: true,
     define: {
@@ -293,9 +295,10 @@ for (const platform of RELAY_BUILD_PLATFORMS) {
   mkdirSync(outDir, { recursive: true })
   await build({
     entryPoints: [wslHookEntry],
+    alias: JSONC_PARSER_ESM_ALIAS,
     bundle: true,
     platform: 'node',
-    target: 'node18',
+    target: 'node24',
     format: 'cjs',
     outfile: join(outDir, 'wsl-agent-hook-relay.js'),
     sourcemap: false,
@@ -313,7 +316,7 @@ for (const platform of RELAY_BUILD_PLATFORMS) {
     entryPoints: [wslBrowserNetworkEntry],
     bundle: true,
     platform: 'node',
-    target: 'node18',
+    target: 'node24',
     format: 'cjs',
     outfile: join(outDir, 'wsl-browser-network-relay.js'),
     sourcemap: false,
@@ -329,6 +332,18 @@ for (const platform of RELAY_BUILD_PLATFORMS) {
     .slice(0, 12)
   writeFileSync(join(outDir, '.browser-network-version'), `${RELAY_VERSION}+${browserNetworkHash}`)
   console.log(`Built WSL browser network relay → ${outDir}/wsl-browser-network-relay.js`)
+
+  // Why here, not the relay dirs: only the desktop runs it, inside WSL; SSH hosts never upload it.
+  await build({
+    entryPoints: [join(ROOT, 'src/main/claude-accounts/claude-profile-wsl-entry.ts')],
+    bundle: true,
+    platform: 'node',
+    target: 'node24',
+    format: 'cjs',
+    outfile: join(outDir, WSL_CLAUDE_PROFILE_HELPER_FILENAME),
+    minify: true,
+    define: { 'process.env.NODE_ENV': '"production"' }
+  })
 }
 
 console.log('Relay build complete.')
